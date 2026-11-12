@@ -5,7 +5,7 @@
 
 ## Course Information
 
-- **Course Dates:** 01/12 – 04/28, 2026  
+- **Course Dates:** 01/20 – 05/04, 2027  
 - **Credit Hours:** 3  
 - **Meeting Time:** Monday & Wednesday, 09:30 – 10:45  
 - **Location:** SDS 246  
@@ -25,32 +25,33 @@ Office: SDS 330
 Office Hours: M 11am - 12pm 
 
 **Teaching Assistant**  
-Yuyang Cheng  
-Email: jrm9ga@virginia.edu  
-Office Hours: W 11am - 12pm
+TBD 
+Email: TBD
+Office Hours: TBD
 
 ---
 
 ## Course Overview
 
-Machine Learning II is a PhD-level course that builds on foundational machine learning knowledge and shifts the focus from *how to run models* to *how and why models work—or fail—in real-world settings*. While ML I emphasizes predictive performance, ML II emphasizes **methodological understanding, statistical validity, robustness, interpretability, and generalizability**.
+**A Beautiful Question to Guide the Course**: When should you trust what a model tells you — and what does it take to find out? This question sits at the heart of everything we do in ML II. It asks you not just to build models, but to interrogate them: to understand the assumptions they rest on, the conditions under which they break down, and the standards of evidence required before their outputs can responsibly inform scientific conclusions or real-world decisions. It also asks you to consider who is affected by those decisions — and what it means to practice machine learning responsibly in a world where algorithmic systems increasingly shape human lives.
 
-The course situates machine learning methods within a broader statistical and scientific framework, with emphasis on high-dimensional and complex data.
+
+Machine Learning II is a PhD-level course that builds on foundational machine learning knowledge and shifts the focus from *how to run models* to *how and why models work — or fail — in real-world settings*. While ML I emphasizes predictive performance, ML II emphasizes **methodological understanding, statistical validity, robustness, interpretability, and generalizability**. The course situates machine learning methods within a broader statistical and scientific framework, with particular attention to high-dimensional and complex data.
+
 
 > **Core theme:**  
-> *Machine Learning II is not about learning more models—it is about learning when, why, and how machine learning methods can be used responsibly and rigorously.*
+> *Machine Learning II is not about learning more models — it is about learning when, why, and how machine learning methods can be used responsibly and rigorously. That includes not only statistical rigor, but ethical clarity: understanding the human consequences of the methods we build and deploy.*
 
 ---
 
 ## Learning Outcomes
 
 By the end of the semester, students will be able to:
-1. Critically evaluate machine learning methods and their assumptions
-2. Distinguish prediction from inference and understanding
-3. Assess robustness, uncertainty, and generalizability
-4. Apply supervised learning methods responsibly
-5. Communicate methodological choices clearly
-
+1. Understand the fundamental concepts, assumptions, and theoretical properties of core machine learning models — including their mathematical foundations, the conditions under which they are valid, and how they relate to one another within a unified statistical framework.
+2. Identify an open question, limitation, or unexplored extension in a method studied in the course and articulate it as a potential research direction.
+3. Given a novel research problem, identify which class of machine learning methods is most appropriate and justify that choice based on the structure of the data and the scientific question — and, conversely, recognize when a standard ML approach is being misapplied and articulate why.
+4. Communicate methodological choices clearly and precisely — whether in writing (e.g., a research paper or technical report) or in oral settings (e.g., in response to probing questions) — in a manner appropriate for a PhD-level scientific audience.
+5. Reflect on how the deployment of machine learning methods affects different communities and populations, and articulate the ways in which methodological choices — including what data is collected, how models are validated, and how results are communicated — shape real-world outcomes.
 ---
 
 ## What to Expect
