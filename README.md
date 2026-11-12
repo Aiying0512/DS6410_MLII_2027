@@ -106,12 +106,12 @@ This course requires the use of the following statistical and typesetting softwa
 
 | Component | Percentage |
 |---------|------------|
-| Homework Assignments | 40% |
-|Class Attendance| 5%|
+| Homework Assignments | 20% |
+|Class Attendance| 10%|
 |In-class Mini-Presentations| 10% |
-| In-class Quizzes | 5% |
-| Midterm Project | 20% |
-| Final Oral Exam | 25% |
+| In-class Quizzes | 10% |
+| Course Project | 20% |
+| Final Oral Exam | 20% |
 | **Total** | **100%** |
 
 ---
