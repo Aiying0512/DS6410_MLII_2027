@@ -1,0 +1,303 @@
+---
+title: "Lab: Choice of Link Functions for Binomial Regression Models"
+author: "Aiying Zhang"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: false
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+##  Mini-lecture: Why link functions matter in binomial GLMs
+
+### Choice of link for binomial regression models
+
+Consider independent responses $(Y_1,\dots,Y_n)$ where each $Y_i \sim \mathrm{Bin}(m_i,\pi_i), i=1,\dots,n,$ with binomial size ($m_i$) (number of trials) and success probability $(\pi\_i\in(0,1))$.
+
+A generalized linear model (GLM) relates $(\pi\_i)$ to predictors through a **linear predictor** $$ \eta_i = x_i^T\beta = \beta_0 + \beta_1 x_i \quad (\text{simple case}),$$ and a **link function** $g(\cdot): g(\pi_i) = \eta_i.$
+
+#### Identity link: $\pi=\eta$
+
+A key constraint is that the inverse link must map any real ($\eta$) into a valid probability: $$ g^{-1}(\eta)\in[0,1] \quad \text{for all } \eta\in\mathbb{R}.$$ This is why the **identity link** $g(\pi)=\pi$ (giving $\pi=\beta_0+\beta_1x)$ is easy to interpret but typically unsuitable globally: linear functions can exceed $[0,1]$.
+
+------------------------------------------------------------------------
+
+A helpful way to motivate different links is via a **latent tolerance** (or threshold) variable.
+
+Suppose each individual has an unobserved tolerance (T) to an exposure/dose (x), with CDF (F). An event occurs (e.g., “success”, “failure”, “lethal response”) when $T \le x$. Then $$ \pi(x) = \Pr(\text{event at dose } x) = \Pr(T \le x) = F(x). $$
+
+In regression form, we introduce a location/scale model for tolerance: $$ T = -\frac{\beta_0}{\beta_1} + \frac{1}{\beta_1} Z, \qquad \beta\_1\>0, $$ where $Z$ has some standard distribution with CDF $F_0$. Then $$ \pi(x)=\Pr(T\le x) =\Pr\left(Z \le \beta_0 + \beta_1 x\right) =F_0(\beta_0+\beta_1x). $$ So the inverse link is exactly a CDF: $$ \pi(x) = g^{-1}(\eta) = F_0(\eta), \quad \eta=\beta_0+\beta_1x. $$
+
+Different choices of $F_0$ produce different link functions.
+
+------------------------------------------------------------------------
+
+#### Probit link (normal tolerance)
+
+If the latent noise is standard normal, $Z\sim N(0,1)$, then $F_0=\Phi$ and $$ \pi(x)=\Phi(\beta_0+\beta_1x).$$ Equivalently, $$ g(\pi)=\Phi^{-1}(\pi)=\beta_0+\beta_1x,$$ which is the **probit** link.
+
+**Interpretation:** probit corresponds to an assumed *normal* tolerance distribution.
+
+------------------------------------------------------------------------
+
+#### Logit link (logistic tolerance)
+
+If the latent noise follows the standard logistic distribution with CDF $$ F_0(\eta)=\frac{e^\eta}{1+e^\eta}=\mathrm{expit}(\eta), $$ then $$ \pi(x)=\mathrm{expit}(\beta_0+\beta_1x) =\frac{e^{\beta_0+\beta_1x}}{1+e^{\beta_0+\beta_1x}}. $$ Taking the logit transform gives the **canonical link** for binomial GLMs: $$ g(\pi)=\log\left(\frac{\pi}{1-\pi}\right)=\beta_0+\beta_1x. $$
+
+**Interpretation advantage:** coefficients are naturally interpreted in terms of **odds**. A one-unit increase in $x$ multiplies the odds by $e^{\beta_1}$.
+
+------------------------------------------------------------------------
+
+#### Complementary log–log (cloglog) link (asymmetric tolerance)
+
+If $F_0$ is an extreme value (Gumbel-type) CDF, one obtains $$ \pi(x)=1-\exp\left(-e^{\beta_0+\beta_1x}\right). $$ Then $$ g(\pi)=\log{\log(1-\pi)}=\beta_0+\beta_1x, $$ which is the **complementary log–log** link (cloglog).
+
+**Key feature:** unlike probit/logit, cloglog is **asymmetric**. As $\eta\to -\infty$, $\pi$ approaches 0 differently than it approaches 1 as $\eta\to +\infty$. This link is common in **hazard / event-time** interpretations and for **rare-event** settings.
+
+------------------------------------------------------------------------
+
+### Compare inverse links $g^{-1}(\eta)$ directly
+
+In this section we compare the shapes of inverse links as functions of $\eta$.
+
+-   Logit inverse: $g^{-1}(\eta)=\mathrm{expit}(\eta)$
+-   Probit inverse: $g^{-1}(\eta)=\Phi(\eta)$
+-   Cloglog inverse: $g^{-1}(^\eta)=1-\exp(-e\eta)$
+
+```{r}
+xu <- 2.5 ; xl <- -xu
+curve(plogis(x), from = xl, to = xu, ylim = c(0,1),
+ylab = expression({g^{-1}}(x)))
+curve(pnorm(x), from = xl, to = xu,
+lty = 2, add = TRUE)
+cllinv <- make.link("cloglog")$linkinv
+curve(cllinv(x), from = xl, to = xu,
+lty = 3, add = TRUE)
+legend("topleft", c("logit", "probit", "cloglog"), lty = 1:3)
+```
+
+Discussion prompts
+
+-Which two links are symmetric around (0,0.5)?
+
+-Which link is asymmetric? In which direction?
+
+-Which link approaches 0/1 faster?
+
+------------------------------------------------------------------------
+
+A more meaningful comparison: match midpoint and slope
+
+```{r}
+xu <- 2.5 ; xl <- -xu
+curve(plogis(sqrt(8/pi)*x), from = xl, to = xu, ylim = c(0,1),
+ylab = expression({g^{-1}}(beta[0] + beta[1] * x)))
+curve(pnorm(x), from = xl, to = xu,
+lty = 2, add = TRUE)
+cllinv <- make.link("cloglog")$linkinv
+curve(cllinv(log(log(2)) + (sqrt(2/pi)/log(2))*x), from = xl, to = xu,
+lty = 3, add = TRUE)
+legend("topleft", c("logit", "probit", "cloglog"), lty = 1:3)
+```
+
+Interpretation
+
+-Probit tends to approach 0 and 1 slightly faster than logit (logit has heavier tails than normal).
+
+-In practice, probit and logit models tend to provide similar fits. The canonical logit link has the advantage of relatively simple interpretations for the regression parameters in terms of odds.
+
+-Cloglog is asymmetric: it approaches 0 and 1 at different rates, which can be useful when the response is skewed (e.g., rare events).
+
+### Bliss’s Beetles Example
+
+This example, taken from Agresti (2002), concerns results of a toxicology experiment originally reported by Bliss (1935). The data report the number of beetles killed after exposure to gaseous carbon disulfide at various concentrations.
+
+```{r}
+beetles <- data.frame(
+  Dose   = c(1.6907, 1.7242, 1.7552, 1.7842, 1.8113,
+             1.8369, 1.8610, 1.8839),
+  Killed = c(6, 13, 18, 28, 52, 53, 61, 60),
+  Exposed  = c(59, 60, 62, 56, 63, 59, 62, 60)
+)
+
+
+beetles
+
+with(beetles, plot(Dose, Killed/Exposed, ylim=c(0,1)))
+```
+
+**logit link**
+
+```{r}
+beetles.logit <- glm(Killed/Exposed ~ Dose,
+family = binomial, weights = Exposed,
+data = beetles)
+summary(beetles.logit)
+```
+
+```{r}
+rstandard(beetles.logit)
+
+plot(beetles.logit, which=1:2, ask=FALSE)
+
+```
+
+**probit link**
+
+```{r}
+beetles.probit <- glm(Killed/Exposed ~ Dose,
+family = binomial("probit"), weights = Exposed,
+data = beetles)
+summary(beetles.probit)
+
+rstandard(beetles.probit)
+
+plot(beetles.probit, which=1:2, ask=FALSE)
+```
+
+**cloglog link**
+
+```{r}
+beetles.cloglog <- glm(Killed/Exposed ~ Dose,
+family = binomial("cloglog"), weights = Exposed,
+data = beetles)
+summary(beetles.cloglog)
+
+rstandard(beetles.cloglog)
+plot(beetles.cloglog, which=1:2, ask=FALSE)
+```
+
+**Comparing the standardized residuals**
+
+```{r}
+
+plot(beetles$Dose, rstandard(beetles.logit), ylab="Standardized Residual")
+abline(h = 0, lty=2)
+points(beetles$Dose, rstandard(beetles.probit), pch=2)
+points(beetles$Dose, rstandard(beetles.cloglog), pch=3)
+# legend("bottomright", -1, c("logit", "probit", "cloglog"), pch = 1:3)
+legend("bottomright", c("logit", "probit", "cloglog"), pch = 1:3)
+title("Bliss's Beetles: Residuals for Three Links")
+```
+
+Discussion:
+
+-Could you tell which choice of link appears to fit the data much better?
+
+-What metric would you use to compare the fits?
+
+-Optional Readings on Testing the Link
+
+## Overdispersion: Correlated Binary Observations
+
+In a standard binomial model, we assume that conditional on the success probability (\pi), the individual binary outcomes are **independent**. Under this assumption, $$
+Y \sim \mathrm{Bin}(m, \pi)
+\quad \Longrightarrow \quad
+\mathrm{Var}(Y) = m\pi(1-\pi).$$
+
+In practice, binomial data often exhibit **overdispersion**, meaning that the observed variance of (Y) is larger than the binomial variance. A common explanation is the presence of **unobserved heterogeneity** or **correlation** among the binary trials.
+
+### Correlated binary outcomes and intraclass correlation
+
+Suppose $$
+Y = \sum_{j=1}^m Z_j,
+$$ where $Z_1,\dots,Z_m$ are **exchangeable** Bernoulli random variables: $$
+P(Z_j = 1) = \pi, \qquad j = 1,\dots,m.
+$$
+
+Exchangeability means the joint distribution of $(Z_1,\dots,Z_m)$ is invariant to permutations, which naturally arises when trials share common unobserved factors (e.g., shared environment, genetics, or experimental conditions).
+
+Define the **intraclass correlation** $$\rho = \mathrm{Corr}(Z_1, Z_2).$$
+
+Since $\mathrm{Var}(Z_j)=\pi(1-\pi)$, we have $$\rho
+= \frac{\mathrm{Cov}(Z_1, Z_2)}{\pi(1-\pi)}
+= \frac{P(Z_1 = Z_2 = 1) - \pi^2}{\pi(1-\pi)}.$$
+
+The variance of (Y) can be decomposed as $$\mathrm{Var}(Y)
+= \sum_{j=1}^m \mathrm{Var}(Z_j)
++ \sum_{j\neq k} \mathrm{Cov}(Z_j, Z_k).$$
+
+Substituting the definitions above, $$
+\begin{aligned}
+\mathrm{Var}(Y)
+&= m\pi(1-\pi) + m(m-1)\pi(1-\pi)\rho \\
+&= m\pi(1-\pi)\{1 + (m-1)\rho\}.
+\end{aligned}
+$$
+
+Thus, $$\mathrm{Var}(Y)
+= (\text{binomial variance}) \times \{1 + (m-1)\rho\}.$$
+
+When $\rho > 0$, the variance exceeds the binomial variance, producing **overdispersion**. Even small correlations can have a large impact when $m$ is moderate or large.
+
+### Mixture models: Beta-binomial models
+
+Suppose the success probability (p) itself is random: $p \sim G, \qquad E(p)=\pi,$ and conditional on $p$, $$Z_1,\dots,Z_m \mid p \;\stackrel{\text{i.i.d.}}{\sim}\; \mathrm{Bernoulli}(p).$$
+
+Then marginally, $P(Z_j=1) = E(p)=\pi,$ but the binary variables are **correlated**: $\mathrm{Cov}(Z_1,Z_2) = \mathrm{Var}(p).$
+
+The intraclass correlation becomes $$
+\rho = \frac{\mathrm{Var}(p)}{\pi(1-\pi)},
+\qquad 0 \le \rho \le 1. $$
+
+Whenever $p$ is non-degenerate, $\rho>0$, and overdispersion results.
+
+------------------------------------------------------------------------
+
+A common and convenient choice for the mixing distribution is $p \sim \mathrm{Beta}(a,b), \qquad a,b>0.$
+
+Then $$\pi = E(p) = \frac{a}{a+b},\qquad \rho = \frac{1}{a+b+1}. $$
+
+The marginal distribution of $Y = \sum_{j=1}^m Z_j$ is the **beta–binomial distribution**, written $$ Y \sim \mathrm{BetaBin}(m,\pi,\rho). $$
+
+Its variance satisfies $\mathrm{Var}(Y) = m\pi(1-\pi){1+(m-1)\rho},$ explicitly capturing overdispersion relative to the binomial model.
+
+------------------------------------------------------------------------
+
+### Example: AVSS Data (Overdispersion in Litter Studies)
+
+The AVSS data set is from a toxicological study in which the response was the number of dead fetuses in litters of mice (see Brooks et al., 1997; Garren et al., 2000).
+
+```{r}
+avss <- data.frame(
+  littersize = c(
+    2,4,5,6,9,10,11,12,13,14,15,16,17,18,19,20,
+    10,11,12,13,14,15,16,17,18,19,20,
+    10,11,12,13,14,15,16,17,18
+  ),
+  ndead = c(
+    0,0,0,0,0,1,0,1,1,1,2,2,1,1,1,1,
+    0,0,1,1,1,1,1,1,2,2,2,
+    0,1,1,1,1,2,2,2,3
+  )
+)
+
+head(avss)
+```
+
+A simple intercept-only binomial model assumes that the resposes are independent binomials with a common success probability
+
+```{r}
+avss.binom <- glm(cbind(ndead,littersize-ndead) ~ 1,
+family = "binomial", data = avss)
+
+summary(avss.binom)
+
+```
+
+```{r}
+if (!requireNamespace("VGAM", quietly = TRUE)) install.packages("VGAM")
+library(VGAM, warn.conflicts=FALSE, quietly=TRUE)
+avss.vglm <-vglm(cbind(ndead, littersize - ndead) ~ 1,
+family = betabinomial, data = avss)
+summary(avss.vglm)
+
+coef(avss.vglm)
+
+exp(coef(avss.vglm))
+
+```

@@ -1,0 +1,182 @@
+---
+title: "Lab 1: Binomial Response Models and Logistic Regression [self-learning]"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Objectives
+
+In this lab, you will:
+
+-   Explore binomial and binary response data
+-   Visualize data relevant to logistic regression
+-   Fit binomial GLMs with a logit link
+-   Interpret coefficients via odds and odds ratios
+-   Reproduce the Challenger O-ring analysis
+
+------------------------------------------------------------------------
+
+# Part A. Binomial reminders
+
+## A1. Bernoulli as Binomial with (m = 1)
+
+If $B \sim \text{Bin}(1,\pi)$, then B is Bernoulli($\pi$).
+
+```{r}
+pi <- 0.3 
+set.seed(1) 
+B <- rbinom(n = 20, size = 1, prob = pi) 
+B 
+mean(B)
+```
+
+## A2. Normal approximation (large m, $\pi$ not near 0/1)
+
+If $B_m \sim \text{Bin}(m, \pi)$ and m is large, then
+
+$$ \frac{B_m - m\pi}{\sqrt{m\pi(1-\pi)}} \approx N(0,1). $$
+
+```{r}
+set.seed(2)
+m <- 200
+pi <- 0.4
+
+Bm <- rbinom(n = 2000, size = m, prob = pi)
+Z  <- (Bm - m*pi) / sqrt(m*pi*(1 - pi))
+
+mean(Z)
+sd(Z)
+
+hist(
+  Z, breaks = 40,
+  main = "Standardized Binomial ~ Normal(0,1)",
+  xlab = "Z"
+)
+curve(dnorm(x), add = TRUE, lwd = 2)
+```
+
+## A3. Poisson approximation *(rare events)*
+
+If $B_m \sim \text{Bin}(m, \pi_m)$ with $m\pi_m \to \lambda$, then
+
+$$ B_m \Rightarrow \text{Poisson}(\lambda). $$
+
+```{r}
+set.seed(3)
+
+m <- 2000
+lambda <- 2
+pi_m <- lambda / m
+
+Bm <- rbinom(n = 5000, size = m, prob = pi_m)
+
+# Summary statistics
+table(Bm)[1:8]
+mean(Bm)
+var(Bm)
+```
+
+# Part B. Simple Logistic Regression
+
+Challenger O-Ring example (temperature vs distress): The Challenger O-ring example is a classic case study used to illustrate binomial response models and logistic regression, as well as the consequences of misleading data analysis.
+
+This classic dataset analyzes whether the probability of O-ring distress increases as temperature decreases.
+
+```{r}
+if (!requireNamespace("faraway", quietly = TRUE)) install.packages("faraway")
+
+library(faraway)
+data(orings)
+head(orings)
+```
+
+## Visulization
+
+Tragic plot of space shuttle o-ring failure data vs plot of full data
+
+```{r}
+with(orings[orings$damage > 0,],
+plot(jitter(temp, factor=3), damage, xlab = "Temperature (jittered)"))
+
+with(orings,
+plot(jitter(temp, factor=3), damage, xlab = "Temperature (jittered)"))
+
+```
+
+Why we must include damage = 0 If we remove damage = 0, we are conditioning on failures having occurred, which biases the analysis. To estimate a failure probability P(distress), we must include both events and non-events.
+
+## Binary logistic regression
+
+```{r}
+fit1 <- glm((damage > 0) ~ temp, family=binomial, data=orings)
+summary(fit1)
+plot(fit1, cex.caption=0.8)
+```
+
+Though easily produced, the usual diagnostic plots are not very useful for binary data.
+
+## Interpreting coefficients
+
+```{r}
+coef(fit1)
+vcov(fit1)
+
+## Wald 95% CI
+coef(fit1)[2] + qnorm(c(.025,.975)) * sqrt(vcov(fit1)[2,2])
+
+## odds
+exp(coef(fit1)[2])
+
+## 95% CI uisng likelihood ration test
+fit1.ci <- confint(fit1)
+```
+
+Here are the fitted linear predictor values (the default) and the estimated probabilities of O-ring failure for each launch.
+
+```{r}
+predict(fit1, type = "link")
+
+predict(fit1, type = "response")
+```
+
+Finally, here is a plot of the data and the fitted logistic regression curve.
+
+```{r}
+range(orings$temp)
+
+
+xmin <- 40 ; xmax <- 90
+x <- seq(xmin, xmax, length=100)
+y <- predict(fit1, data.frame(temp=x), type="response")
+opar <- par()
+par(mar=c(4,4,1,1)+0.1, mgp=c(2,0.75,0), oma=c(1,1,5,1))
+
+plot(c(xmin, xmax), c(0,1), type = "n",
+xlab="Temperature",
+ylab="O-Ring Damage (0=No, 1=Yes)")
+points(jitter(orings$temp, factor=3), orings$damage > 0)
+lines(x, y)
+title("O-Ring Damage for\n Pre-Challenger Shuttle Launches\n
+Logistic Regression Fit", outer=TRUE)
+
+
+```
+
+## Compare with count model
+
+```{r}
+fit2 <- glm(cbind(damage, 6 - damage) ~ temp, family = binomial, data = orings)
+
+sumary(fit2)
+```
+
+## Next lab
+
+We will compare logit models and other link functions for binomial response (probit and log-log), and discuss overdispersion cases

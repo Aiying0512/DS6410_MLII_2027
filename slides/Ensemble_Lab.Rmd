@@ -1,0 +1,584 @@
+---
+title: "DS6410 Machine Learning II — Ensemble Methods Lab"
+author: "DS6410"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+
+---
+
+## Introduction
+
+Ensemble methods combine the predictions of multiple individual models — often called **base learners** or **weak learners** — to produce a single, more accurate and robust prediction. Rather than relying on any one model, ensemble techniques exploit the diversity among models to compensate for each model's individual weaknesses.
+
+This lab explores two of the most fundamental families of ensemble techniques:
+
+- **Bagging (Bootstrap Aggregating):** Builds many models independently and in parallel, then averages their predictions. Its primary goal is to reduce **variance**.
+- **Boosting:** Builds models sequentially, where each new model focuses on correcting the errors of the previous one. Its primary goal is to reduce **bias**.
+
+Understanding the distinction between variance reduction and bias reduction is central to this lab. Recall the **bias-variance tradeoff**: a model's expected prediction error can be decomposed as:
+
+```
+Expected Error = Bias² + Variance + Irreducible Noise
+```
+
+Bagging attacks the **Variance** term; Boosting attacks the **Bias** term.
+
+---
+
+## Learning Objectives
+
+By the end of this lab, you will be able to:
+
+1. Explain how **Bagging** reduces variance and implement it in R using the `ipred` package.
+2. Use **Out-of-Bag (OOB) error** as an internal validation estimate, eliminating the need for a separate validation set.
+3. Recognize the **limits of bagging** when applied to high-bias (underfitting) base learners.
+4. Implement **Random Forests** as an enhanced form of bagging that further decorrelates trees.
+5. Explain how **Boosting** works sequentially to reduce model bias.
+6. Implement and compare three boosting algorithms: **AdaBoost**, **Gradient Boosting (GBM)**, and **XGBoost**.
+
+---
+
+## Lab Setup
+
+We will use the `PimaIndiansDiabetes2` dataset from the `mlbench` package — a classic binary classification problem predicting the onset of diabetes based on diagnostic measurements.
+
+```{r setup-packages, eval=FALSE}
+# Install required packages (run once, then set eval=FALSE)
+install.packages(c("mlbench", "rpart", "rpart.plot", "ipred",
+                   "randomForest", "caret", "adabag", "gbm", "xgboost"))
+```
+
+```{r load-libraries}
+# Load libraries
+library(mlbench)
+library(rpart)
+library(rpart.plot)
+library(ipred)
+library(randomForest)
+library(caret)
+library(adabag)
+library(gbm)
+library(xgboost)
+```
+
+```{r helper-function}
+# Version-safe helper for ipred::bagging() predictions.
+# Some versions of ipred return a data.frame with a $class column;
+# others return a factor directly. This function handles both.
+extract_bagg_preds <- function(pred_obj) {
+  if (is.data.frame(pred_obj)) {
+    return(as.character(pred_obj$class))
+  }
+  return(as.character(pred_obj))
+}
+```
+
+```{r load-data}
+# Load and clean the dataset
+data("PimaIndiansDiabetes2", package = "mlbench")
+pima_data <- na.omit(PimaIndiansDiabetes2)
+
+# Set seed for reproducibility
+set.seed(40)
+
+# 70/30 train-test split using caret
+train_idx <- createDataPartition(pima_data$diabetes, p = 0.7, list = FALSE)
+train_set <- pima_data[train_idx, ]
+test_set  <- pima_data[-train_idx, ]
+
+cat("Training samples:", nrow(train_set), "\n")
+cat("Test samples:    ", nrow(test_set),  "\n")
+cat("Class distribution (train):\n")
+print(table(train_set$diabetes))
+```
+
+---
+
+## Part 1: Bagging — Reducing Variance
+
+### 1.1 Why Decision Trees Are High-Variance
+
+A deep, unpruned decision tree is a classic **high-variance, low-bias** model. It fits the training data very closely — sometimes memorizing noise — and is highly sensitive to small changes in the training set.
+
+```{r single-tree}
+# Train a single, deep decision tree (small cp = deep tree)
+single_tree <- rpart(diabetes ~ .,
+                     data    = train_set,
+                     control = rpart.control(cp = 0.001))
+
+# Visualize the tree
+rpart.plot(single_tree, extra = 101, roundint = FALSE,
+           box.palette = "GnBu",
+           main = "Single Deep Decision Tree")
+
+# Evaluate on the test set
+tree_preds <- predict(single_tree, test_set, type = "class")
+tree_acc   <- mean(tree_preds == test_set$diabetes)
+cat("Single Tree Test Accuracy:", round(tree_acc, 4), "\n")
+```
+
+> **Discussion:** Notice how complex the tree is. Each branch represents a decision rule learned from the specific training sample. If we retrained on a slightly different sample, many of these branches would change — this is the hallmark of high variance.
+
+---
+
+### 1.2 Applying Bagging to Reduce Variance
+
+Bagging (Bootstrap Aggregating) works as follows:
+
+1. Draw `B` bootstrap samples (random samples **with replacement**) from the training data.
+2. Train a separate base learner on each bootstrap sample.
+3. Aggregate predictions: **majority vote** for classification, **average** for regression.
+
+```{r bagging}
+set.seed(50)
+# Train a bagged model with 100 decision trees
+bagged_model <- ipred::bagging(diabetes ~ .,
+                        data  = train_set,
+                        nbagg = 100,
+                        coob  = TRUE)   # coob=TRUE enables OOB error tracking
+
+
+bagged_preds <- extract_bagg_preds(predict(bagged_model, newdata = test_set))
+bagged_acc   <- mean(bagged_preds == as.character(test_set$diabetes))
+cat("Bagged Model Test Accuracy:", round(bagged_acc, 4), "\n")
+cat("Improvement over single tree:", round(bagged_acc - tree_acc, 4), "\n")
+```
+
+> **Expected Observation:** The bagged model should outperform the single tree. By averaging 100 trees, each trained on a slightly different bootstrap sample, we have smoothed out the individual trees' variance and produced a more stable, generalizable model.
+
+**Exercise 1.2:** Try changing `nbagg` to 10, 50, and 200. Plot accuracy vs. number of trees. At what point does adding more trees stop providing meaningful improvement?
+
+```{r bagging-exercise}
+# Exercise 1.2: Accuracy vs. number of bootstrap trees
+nbagg_values <- c(10, 25, 50, 100, 150, 200)
+acc_values   <- numeric(length(nbagg_values))
+
+for (i in seq_along(nbagg_values)) {
+  m     <- ipred::bagging(diabetes ~ ., data = train_set, nbagg = nbagg_values[i])
+  preds <- extract_bagg_preds(predict(m, newdata = test_set))
+  acc_values[i] <- mean(preds == as.character(test_set$diabetes))
+}
+
+plot(nbagg_values, acc_values, type = "b", pch = 19,
+     xlab = "Number of Bootstrap Trees",
+     ylab = "Test Accuracy",
+     main = "Bagging: Accuracy vs. Number of Trees",
+     col  = "steelblue",
+     ylim = c(min(acc_values) - 0.02, max(acc_values) + 0.02))
+abline(h = tree_acc, lty = 2, col = "red")
+legend("bottomright", legend = c("Bagged", "Single Tree"),
+       col = c("steelblue", "red"), lty = c(1, 2), pch = c(19, NA))
+```
+
+---
+
+### 1.3 Out-of-Bag (OOB) Error — No Validation Set Needed
+
+A powerful property of bagging is the **Out-of-Bag (OOB) error estimate**. Because each bootstrap sample is drawn with replacement from `n` observations, on average only about **63.2%** of the original training observations appear in any given bootstrap sample. The remaining ~36.8% — those **not** selected — are the out-of-bag observations for that tree.
+
+```{r oob-error}
+# FIX: ipred stores OOB error in $err (a single numeric value, not a list).
+# coob=TRUE must be set when calling bagging() to enable OOB tracking.
+oob_error    <- bagged_model$err
+oob_accuracy <- 1 - oob_error
+
+cat("OOB Error Estimate:    ", round(oob_error, 4), "\n")
+cat("OOB Accuracy Estimate: ", round(oob_accuracy, 4), "\n")
+cat("Test Set Accuracy:     ", round(bagged_acc, 4), "\n")
+```
+
+> **Key Insight:** The OOB accuracy should be close to the test set accuracy, demonstrating that OOB estimation is a reliable and computationally free substitute for cross-validation when using bagged ensembles.
+
+**Exercise 1.3:** Compare the OOB accuracy to a 5-fold cross-validation estimate using the `caret` package. Are they similar? Which is faster to compute?
+
+```{r cv-comparison}
+# 5-fold cross-validation for comparison
+set.seed(42)
+cv_control <- trainControl(method = "cv", number = 5)
+cv_model   <- train(diabetes ~ ., data = train_set,
+                    method    = "rpart",
+                    trControl = cv_control)
+cat("5-Fold CV Accuracy (rpart):", round(max(cv_model$results$Accuracy), 4), "\n")
+cat("OOB Accuracy (bagging):    ", round(oob_accuracy, 4), "\n")
+```
+
+---
+
+### 1.4 The Limits of Bagging: High-Bias Base Learners
+
+Bagging is a **variance-reduction** technique. It cannot fix a model that is fundamentally too simple or biased. A **decision stump** — a tree with only a single split (`maxdepth = 1`) — is a highly biased model.
+
+```{r bagging-stumps}
+# Bag 100 decision stumps (maxdepth = 1)
+bagged_stumps <- ipred::bagging(diabetes ~ .,
+                         data    = train_set,
+                         nbagg   = 100,
+                         control = rpart.control(maxdepth = 1))
+
+# FIX: use version-safe helper
+stump_preds <- extract_bagg_preds(predict(bagged_stumps, newdata = test_set))
+stump_acc   <- mean(stump_preds == as.character(test_set$diabetes))
+
+cat("Bagged Deep Trees Accuracy: ", round(bagged_acc,  4), "\n")
+cat("Bagged Stumps Accuracy:     ", round(stump_acc,   4), "\n")
+cat("Single Tree Accuracy:       ", round(tree_acc,    4), "\n")
+
+# Comparison bar chart
+barplot(c("Single Tree"   = tree_acc,
+          "Bagged Stumps" = stump_acc,
+          "Bagged Trees"  = bagged_acc),
+        col  = c("gray60", "tomato", "steelblue"),
+        ylim = c(0, 1),
+        ylab = "Test Accuracy",
+        main = "Bagging: Effect of Base Learner Complexity")
+abline(h = 0.5, lty = 2, col = "black")
+```
+
+> **Expected Observation:** The bagged stumps should perform noticeably worse than the bagged deep trees. This illustrates a critical principle: **bagging requires low-bias, high-variance base learners to be effective.**
+
+---
+
+### 1.5 Random Forests: Decorrelating the Trees
+
+Standard bagging has a subtle limitation. If one or two features are very strong predictors, most bootstrapped trees will use those features near the root, making the trees highly correlated. Averaging correlated models provides less variance reduction than averaging independent models.
+
+**Random Forests** address this by introducing an additional source of randomness: at each split, only a **random subset of `mtry` features** is considered as candidates.
+
+```{r random-forest}
+set.seed(42)
+rf_model <- randomForest(diabetes ~ .,
+                         data       = train_set,
+                         ntree      = 500,
+                         mtry       = 3,
+                         importance = TRUE)
+
+# Print the model — includes OOB error estimate
+print(rf_model)
+
+# Evaluate on the test set
+# randomForest::predict() returns a factor cleanly — as.character() for consistency
+rf_preds <- as.character(predict(rf_model, newdata = test_set, type = "class"))
+rf_acc   <- mean(rf_preds == as.character(test_set$diabetes))
+cat("\nRandom Forest Test Accuracy:", round(rf_acc, 4), "\n")
+
+# Variable importance plot
+varImpPlot(rf_model, main = "Random Forest: Variable Importance")
+```
+
+| Model | Test Accuracy | OOB Accuracy |
+|---|---|---|
+| Single Decision Tree | *(your result)* | N/A |
+| Bagged Trees (100) | *(your result)* | *(your result)* |
+| Bagged Stumps (100) | *(your result)* | *(your result)* |
+| Random Forest (500) | *(your result)* | *(from print output)* |
+
+**Exercise 1.5:** Experiment with the `mtry` parameter (try values of 2, 3, 5, and 8). Plot OOB error vs. `mtry`. What value minimizes OOB error on this dataset?
+
+```{r rf-mtry-exercise}
+# Exercise 1.5: OOB error vs. mtry
+set.seed(42)
+mtry_values <- c(2, 3, 4, 5, 6, 7, 8)
+oob_errors  <- numeric(length(mtry_values))
+
+for (i in seq_along(mtry_values)) {
+  rf <- randomForest(diabetes ~ ., data = train_set,
+                     ntree = 300, mtry = mtry_values[i])
+  # FIX: err.rate is a matrix with columns "OOB", "neg", "pos"
+  # Index by column name to get the final OOB error at the last tree
+  oob_errors[i] <- rf$err.rate[nrow(rf$err.rate), "OOB"]
+}
+
+plot(mtry_values, oob_errors, type = "b", pch = 19,
+     xlab = "mtry (Features Considered at Each Split)",
+     ylab = "OOB Error Rate",
+     main = "Random Forest: OOB Error vs. mtry",
+     col  = "darkgreen")
+abline(v = mtry_values[which.min(oob_errors)], lty = 2, col = "red")
+legend("topright",
+       legend = paste("Best mtry =", mtry_values[which.min(oob_errors)]),
+       col = "red", lty = 2)
+```
+
+---
+
+## Part 2: Boosting — Reducing Bias
+
+Boosting takes a fundamentally different approach from bagging. Rather than building independent models in parallel, boosting builds models **sequentially**. Each new model is trained to correct the mistakes made by the current ensemble. This process iteratively reduces the **bias** of the ensemble.
+
+### 2.1 The Core Idea of Sequential Ensembles
+
+The final boosted model takes the form of a **weighted sum** of weak learners:
+
+```
+F(x) = α₁·h₁(x) + α₂·h₂(x) + ... + αₘ·hₘ(x)
+```
+
+where each `hₘ` is a weak learner and `αₘ` is its contribution weight.
+
+---
+
+### 2.2 AdaBoost (Adaptive Boosting)
+
+AdaBoost maintains a **weight for each training observation**. After each round, misclassified observations get higher weights, forcing the next learner to focus on hard examples.
+
+```{r adaboost}
+set.seed(42)
+# Train an AdaBoost model
+adaboost_model <- boosting(diabetes ~ .,
+                            data   = train_set,
+                            mfinal = 100,
+                            boos   = TRUE)
+
+# FIX: adabag::predict.boosting() returns a LIST, not a vector.
+# The class predictions are in $class (a character vector).
+adaboost_result <- predict(adaboost_model, newdata = test_set)
+adaboost_preds  <- adaboost_result$class          # character vector of "pos"/"neg"
+adaboost_acc    <- mean(adaboost_preds == as.character(test_set$diabetes))
+cat("AdaBoost Test Accuracy:", round(adaboost_acc, 4), "\n")
+
+# Note: adaboost_result$error is the misclassification rate on test_set
+cat("AdaBoost Test Error:   ", round(adaboost_result$error, 4), "\n")
+
+# Variable importance
+barplot(sort(adaboost_model$importance, decreasing = TRUE),
+        las   = 2,
+        col   = "tomato",
+        main  = "AdaBoost: Variable Importance",
+        ylab  = "Importance (%)")
+```
+
+**Exercise 2.2:** Examine `adaboost_model$weights` — these are the contribution weights `αₘ` for each of the 100 learners. Do earlier or later learners tend to have higher weights?
+
+```{r adaboost-weights}
+# Plot learner weights over boosting rounds
+plot(seq_along(adaboost_model$weights), adaboost_model$weights,
+     type = "l", col = "tomato", lwd = 2,
+     xlab = "Boosting Round",
+     ylab = expression(alpha[m] ~ "(Learner Weight)"),
+     main = "AdaBoost: Learner Contribution Weights Over Rounds")
+```
+
+---
+
+### 2.3 Gradient Boosting Machine (GBM)
+
+Gradient Boosting fits each new learner to the **negative gradient of the loss function** — for binary classification with Bernoulli deviance, this is related to the log-odds residuals.
+
+```{r gbm}
+# FIX: gbm() requires a numeric 0/1 response for "bernoulli" distribution.
+# We create a separate training frame with the numeric label.
+train_gbm           <- train_set
+train_gbm$diabetes  <- ifelse(train_set$diabetes == "pos", 1, 0)
+
+set.seed(42)
+gbm_model <- gbm(diabetes ~ .,
+                 data              = train_gbm,
+                 distribution      = "bernoulli",
+                 n.trees           = 500,
+                 interaction.depth = 3,
+                 shrinkage         = 0.05,
+                 n.minobsinnode    = 10,
+                 cv.folds          = 5,
+                 verbose           = FALSE)
+
+# Find the optimal number of trees via cross-validation
+best_trees <- gbm.perf(gbm_model, method = "cv", plot.it = TRUE)
+cat("Optimal number of trees (CV):", best_trees, "\n")
+
+# FIX: gbm predict() with type="response" returns probabilities (0–1).
+# test_set still has the original factor diabetes column — do NOT convert it.
+gbm_probs <- predict(gbm_model, newdata = test_set,
+                     n.trees = best_trees, type = "response")
+gbm_preds <- ifelse(gbm_probs > 0.5, "pos", "neg")
+gbm_acc   <- mean(gbm_preds == as.character(test_set$diabetes))
+cat("GBM Test Accuracy:", round(gbm_acc, 4), "\n")
+
+# Variable importance
+summary(gbm_model, n.trees = best_trees,
+        main = "GBM: Variable Importance (Relative Influence)")
+```
+
+> **Key Insight:** The `gbm.perf()` function uses built-in cross-validation to identify the optimal number of trees — the point at which validation error is minimized before the model starts to overfit. This is analogous to early stopping in neural networks.
+
+**Exercise 2.3:** Try changing `shrinkage` to 0.01 and 0.2. What happens to the optimal number of trees and the final test accuracy?
+
+```{r gbm-shrinkage-exercise}
+# Exercise 2.3: Effect of learning rate (shrinkage)
+shrinkage_vals <- c(0.01, 0.05, 0.2)
+gbm_results    <- data.frame(shrinkage   = shrinkage_vals,
+                              best_trees  = NA_integer_,
+                              test_acc    = NA_real_)
+
+set.seed(42)
+for (i in seq_along(shrinkage_vals)) {
+  m <- gbm(diabetes ~ .,
+           data              = train_gbm,
+           distribution      = "bernoulli",
+           n.trees           = 800,
+           interaction.depth = 3,
+           shrinkage         = shrinkage_vals[i],
+           n.minobsinnode    = 10,
+           cv.folds          = 5,
+           verbose           = FALSE)
+  bt    <- gbm.perf(m, method = "cv", plot.it = FALSE)
+  probs <- predict(m, newdata = test_set, n.trees = bt, type = "response")
+  preds <- ifelse(probs > 0.5, "pos", "neg")
+  gbm_results$best_trees[i] <- bt
+  gbm_results$test_acc[i]   <- mean(preds == as.character(test_set$diabetes))
+}
+
+print(gbm_results)
+```
+
+---
+
+### 2.4 XGBoost (Extreme Gradient Boosting)
+
+XGBoost extends GBM with regularization (L1/L2), second-order gradient information, parallel tree construction, and built-in early stopping.
+
+```{r xgboost}
+# FIX: xgboost requires a pure numeric matrix — no factor columns.
+# model.matrix() with ". - 1" removes the intercept and expands factors,
+# but since all predictors are numeric here, it simply drops the response.
+train_matrix <- model.matrix(diabetes ~ . - 1, data = train_set)
+train_label  <- ifelse(train_set$diabetes == "pos", 1, 0)
+test_matrix  <- model.matrix(diabetes ~ . - 1, data = test_set)
+test_label   <- ifelse(test_set$diabetes == "pos", 1, 0)
+
+# Create DMatrix objects
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+dtest  <- xgb.DMatrix(data = test_matrix,  label = test_label)
+
+set.seed(42)
+xgb_params <- list(
+  objective        = "binary:logistic",
+  eta              = 0.05,
+  max_depth        = 3,
+  subsample        = 0.8,
+  colsample_bytree = 0.8,
+  eval_metric      = "logloss"
+)
+
+# FIX: xgb.train() prints watchlist output even with verbose=0 in some versions.
+# Suppress with capture.output() if needed; early_stopping_rounds watches "test".
+xgb_model <- xgb.train(
+  params                = xgb_params,
+  data                  = dtrain,
+  nrounds               = 500,
+  watchlist             = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 20,
+  verbose               = 0
+)
+
+cat("Best iteration:", xgb_model$best_iteration, "\n")
+
+# Predict and evaluate
+xgb_probs <- predict(xgb_model, newdata = dtest)
+xgb_preds <- ifelse(xgb_probs > 0.5, "pos", "neg")
+xgb_acc   <- mean(xgb_preds == ifelse(test_label == 1, "pos", "neg"))
+cat("XGBoost Test Accuracy:", round(xgb_acc, 4), "\n")
+
+# Feature importance
+xgb_importance <- xgb.importance(
+  feature_names = colnames(train_matrix),
+  model         = xgb_model
+)
+xgb.plot.importance(xgb_importance,
+                    main = "XGBoost: Feature Importance (Gain)")
+```
+
+**Exercise 2.4:** Compare the feature importance rankings from AdaBoost, GBM, and XGBoost. Do all three methods agree on which features are most important?
+
+---
+
+## Part 3: Final Comparison
+
+### 3.1 Accuracy Summary
+
+```{r summary-table}
+# Collect all results into a summary data frame
+results <- data.frame(
+  Method = c("Single Decision Tree",
+             "Bagged Trees (100)",
+             "Bagged Stumps (100)",
+             "Random Forest (500)",
+             "AdaBoost (100)",
+             "GBM (CV-optimal)",
+             "XGBoost (early stop)"),
+  Test_Accuracy = round(c(tree_acc, bagged_acc, stump_acc,
+                           rf_acc, adaboost_acc, gbm_acc, xgb_acc), 4),
+  Primary_Goal = c("Baseline", "Reduce Variance", "Reduce Variance (limited)",
+                   "Reduce Variance", "Reduce Bias",
+                   "Reduce Bias", "Reduce Bias")
+)
+
+knitr::kable(results, caption = "Test Accuracy Summary — All Ensemble Methods",
+             col.names = c("Method", "Test Accuracy", "Primary Goal"),
+             align = c("l","c","l"))
+```
+
+```{r accuracy-plot}
+# Visual comparison
+barplot(results$Test_Accuracy,
+        names.arg = c("Tree","Bag","Stumps","RF","Ada","GBM","XGB"),
+        col  = c("gray60","steelblue","tomato","darkgreen",
+                 "orange","purple","firebrick"),
+        ylim = c(0, 1),
+        ylab = "Test Accuracy",
+        main = "Ensemble Methods: Test Accuracy Comparison",
+        las  = 1)
+abline(h = tree_acc, lty = 2, col = "black")
+legend("bottomright", legend = "Single Tree Baseline",
+       lty = 2, col = "black")
+```
+
+### 3.2 Conceptual Summary
+
+| Property | Bagging | Random Forest | AdaBoost | GBM | XGBoost |
+|---|---|---|---|---|---|
+| **Build Strategy** | Parallel | Parallel | Sequential | Sequential | Sequential |
+| **Primary Goal** | Reduce Variance | Reduce Variance | Reduce Bias | Reduce Bias | Reduce Bias |
+| **Base Learner** | Deep Trees | Deep Trees | Stumps | Shallow Trees | Shallow Trees |
+| **Diversity Source** | Bootstrap Sampling | Bootstrap + Feature Subset | Re-weighting | Residual Fitting | Residual + Regularization |
+| **Handles Overfitting** | Moderate | Good | Moderate | Good (shrinkage) | Very Good |
+| **Speed** | Fast | Fast | Moderate | Slow | Very Fast |
+| **Internal Validation** | OOB | OOB | No | CV built-in | Early stopping |
+
+### 3.3 Discussion Questions
+
+Answer the following questions in your lab report:
+
+1. Bagging significantly improved accuracy over a single decision tree. Based on the bias-variance framework, explain **why** this improvement occurred and what type of error was reduced.
+
+2. Why did bagging fail to significantly improve performance when applied to decision stumps? What does this tell you about the requirements for an effective base learner in a bagging ensemble?
+
+3. The OOB error estimate was close to the test set error without using any of the test data. Explain **how** this is possible. Why is this particularly useful in practice?
+
+4. Random Forests outperformed standard bagging. What specific mechanism does Random Forest use that standard bagging does not, and why does this lead to better performance?
+
+5. AdaBoost, GBM, and XGBoost all belong to the boosting family but differ in their mechanisms. Briefly describe the key difference between AdaBoost's approach (re-weighting) and GBM's approach (residual fitting). Under what conditions might one be preferred over the other?
+
+6. XGBoost incorporates `subsample` and `colsample_bytree` parameters that borrow ideas from bagging and Random Forests. Why might adding these stochastic elements to a boosting algorithm be beneficial?
+
+---
+
+## References
+
+- Breiman, L. (1996). Bagging Predictors. *Machine Learning*, 24(2), 123–140.
+- Breiman, L. (2001). Random Forests. *Machine Learning*, 45(1), 5–32.
+- Freund, Y., & Schapire, R. E. (1997). A Decision-Theoretic Generalization of On-Line Learning and an Application to Boosting. *Journal of Computer and System Sciences*, 55(1), 119–139.
+- Friedman, J. H. (2001). Greedy Function Approximation: A Gradient Boosting Machine. *Annals of Statistics*, 29(5), 1189–1232.
+- Chen, T., & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. *Proceedings of KDD 2016*.
+- James, G., Witten, D., Hastie, T., & Tibshirani, R. (2021). *An Introduction to Statistical Learning* (2nd ed.). Springer. Chapter 8.

@@ -1,0 +1,410 @@
+---
+title: "Combined Lab: Full Bayesian Hierarchical Models and Empirical Bayes"
+author: "Manus AI"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center", fig.width = 8, fig.height = 6)
+
+# Load necessary packages
+library(dplyr)      # For data manipulation
+library(ggplot2)    # For plotting
+library(forcats)    # For factor manipulation
+library(rethinking) # For Statistical Rethinking framework
+```
+
+# 1. Full Bayesian Hierarchical Models: Statistical Rethinking Framework
+
+In "Statistical Rethinking" [1], Richard McElreath introduces hierarchical models as a way to handle data with nested structures, allowing for **partial pooling**. This approach shares information across groups, leading to more robust estimates, especially for groups with small sample sizes.
+
+This section demonstrates how to specify and fit a full Bayesian hierarchical model using the `rethinking` package's `alist` and `ulam` syntax. We will use a simulated dataset of admission rates across different departments to illustrate the process.
+
+## 1.1 Data Simulation: Departmental Admissions
+
+We simulate data for 12 departments, each with a different number of applicants and a varying true admission probability.
+
+```{r simulate-data}
+set.seed(42)
+num_dept <- 12
+applicants <- sample(50:500, num_dept, replace = TRUE)
+# True probabilities drawn from a population distribution
+true_probs <- rbeta(num_dept, 2, 5) 
+admitted <- rbinom(num_dept, size = applicants, prob = true_probs)
+
+d <- data.frame(
+  dept_id = 1:num_dept,
+  applicants = applicants,
+  admitted = admitted,
+  raw_p = admitted / applicants
+)
+
+head(d)
+```
+
+## 1.2 Model Specification with `alist`
+
+In the `rethinking` framework, we define the model's structure using `alist`. This allows us to explicitly specify the likelihood and the priors for all parameters, including the hyperparameters that define the population distribution.
+
+The model we will fit is:
+- **Likelihood**: $A_i \sim \text{Binomial}(N_i, p_i)$
+- **Linear Model**: $\text{logit}(p_i) = \bar{\alpha} + \alpha_{\text{dept}[i]}$
+- **Varying Intercepts (Prior)**: $\alpha_{\text{dept}[i]} \sim \text{Normal}(0, \sigma)$
+- **Hyper-priors**:
+    - $\bar{\alpha} \sim \text{Normal}(0, 1.5)$
+    - $\sigma \sim \text{Exponential}(1)$
+
+```{r model-specification, eval=FALSE}
+# This code requires the 'rethinking' package to be installed and loaded.
+# If rethinking is not installed, please run install.packages("rethinking")
+
+m_hierarchical <- ulam(
+  alist(
+    admitted ~ dbinom(applicants, p),
+    logit(p) <- a_bar + a_dept[dept_id],
+    a_dept[dept_id] ~ dnorm(0, sigma),
+    a_bar ~ dnorm(0, 1.5),
+    sigma ~ dexp(1)
+  ), data = d, chains = 4, cores = 4, log_lik = TRUE
+)
+
+# Summarize the posterior distribution
+precis(m_hierarchical, depth = 2)
+```
+
+## 1.3 Understanding the Components
+
+- **`admitted ~ dbinom(applicants, p)`**: This is the stochastic part of the model, defining the binomial likelihood for the observed admissions.
+- **`logit(p) <- a_bar + a_dept[dept_id]`**: This is the deterministic part, where we model the log-odds of admission as a combination of a global mean (`a_bar`) and a department-specific deviation (`a_dept`).
+- **`a_dept[dept_id] ~ dnorm(0, sigma)`**: This is the hierarchical prior. It assumes that the departmental deviations come from a common normal distribution with mean 0 and standard deviation `sigma`. This `sigma` is a hyperparameter that controls the amount of pooling.
+- **`a_bar ~ dnorm(0, 1.5)` and `sigma ~ dexp(1)`**: These are the hyper-priors, representing our prior beliefs about the global mean and the variation across departments.
+
+## 1.4 Visualizing Partial Pooling and Shrinkage
+
+A key feature of hierarchical models is **shrinkage**. The departmental estimates are "shrunk" towards the global mean, with more shrinkage occurring for departments with smaller sample sizes.
+
+```{r visualization}
+# For conceptual illustration, let's simulate the effect of partial pooling
+# In a real hierarchical model, these would be derived from MCMC samples.
+
+# Calculate overall mean admission probability
+overall_mean_prob <- sum(d$admitted) / sum(d$applicants)
+
+# Simulate shrinkage: pull raw probabilities towards the overall mean
+# The amount of shrinkage can be thought of as inversely proportional to the number of applicants
+# For simplicity, we'll use a fixed shrinkage factor for demonstration.
+shrinkage_strength <- 0.5 # A conceptual value, higher means more shrinkage
+
+d$shrunk_prob <- with(d, raw_p * (1 - shrinkage_strength) + overall_mean_prob * shrinkage_strength)
+
+# Plot raw vs. shrunk estimates
+ggplot(d, aes(x = raw_p, y = shrunk_prob, size = applicants)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    title = "Conceptual Partial Pooling: Raw vs. Shrunk Estimates",
+    x = "Raw Admission Probability",
+    y = "Shrunk Admission Probability (Conceptual Hierarchical)",
+    size = "Applicants"
+  ) +
+  coord_equal() +
+  scale_color_viridis_c() # Use a color scale for applicants
+
+# Plot shrinkage lines
+ggplot(d, aes(x = factor(dept_id))) +
+  geom_segment(aes(y = raw_p, yend = shrunk_prob, xend = factor(dept_id)), color = "gray", arrow = arrow(length = unit(0.02, "npc"))) +
+  geom_point(aes(y = raw_p), color = "blue", size = 2, alpha = 0.7) +
+  geom_point(aes(y = shrunk_prob), color = "red", size = 2, alpha = 0.7) +
+  labs(
+    title = "Shrinkage Effect in Conceptual Hierarchical Model",
+    x = "Department ID",
+    y = "Admission Probability"
+  ) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
+```
+
+This visualization clearly shows how the hierarchical model pulls the raw estimates towards the diagonal (representing the global mean), illustrating the effect of partial pooling and the influence of the explicit priors.
+
+# 2. Empirical Bayes and the James-Stein Estimator: Baseball Batting Averages
+
+Empirical Bayes (EB) provides a pragmatic approach to shrinkage, often achieving similar benefits to full Bayesian hierarchical models but with less computational overhead. It estimates the prior distribution from the data itself. The James-Stein estimator is a famous example demonstrating the power of shrinkage.
+
+## 2.1 The Baseball Batting Average Problem
+
+Consider the batting averages of baseball players early in a season. A player with few at-bats might have a very high or very low average that doesn't reflect their true skill. We want to estimate each player's true batting average, $\theta_i$, given their observed hits $H_i$ and at-bats $N_i$.
+
+We assume $H_i \sim \text{Binomial}(N_i, \theta_i)$. For Empirical Bayes, we assume $\theta_i$ comes from a common prior distribution, say $\text{Beta}(\alpha, \beta)$, and we estimate $\alpha$ and $\beta$ from the data.
+
+```{r baseball-data-eb-1}
+# Data from Efron and Morris (1975) on 18 baseball players
+# Hits and At-bats for the first 45 at-bats of the 1970 season
+baseball_data <- data.frame(
+  player = c("Clemente", "Robinson", "Howard", "Johnstone", "Berry", "Spencer", "Kessinger", "Decker", "Alvarado", "F. Alou", "Santo", "Swoboda", "Unser", "Williams", "Scott", "Petrocelli", "E. Rodriguez", "Campaneris"),
+  hits = c(18, 17, 16, 15, 14, 14, 13, 12, 11, 11, 10, 10, 10, 10, 10, 9, 8, 7),
+  at_bats = rep(45, 18) # All players had 45 at-bats
+)
+
+# Calculate raw batting averages
+baseball_data <- baseball_data %>%
+  mutate(raw_avg = hits / at_bats)
+
+head(baseball_data)
+```
+
+## 2.2 Estimating the Prior (Method of Moments)
+
+For a Beta-Binomial model, we can estimate the parameters of the Beta prior ($\alpha, \beta$) using the Method of Moments from the observed data. The mean of the Beta distribution is $\frac{\alpha}{\alpha+\beta}$ and the variance is $\frac{\alpha\beta}{(\alpha+\beta)^2(\alpha+\beta+1)}$.
+
+We can approximate the mean of the true batting averages, $\bar{p}$, by the overall observed batting average, and the variance of the true batting averages, $\text{Var}(p)$, by the variance of the observed raw averages (adjusted for sampling variance).
+
+Let $\bar{p} = \frac{\sum H_i}{\sum N_i}$ be the overall batting average.
+Let $\text{Var}(p)$ be the variance of the individual raw batting averages $\hat{\theta}_i = H_i/N_i$.
+
+Then, $\alpha$ and $\beta$ can be estimated using:
+
+$$ \alpha = \bar{p} \left( \frac{\bar{p}(1-\bar{p})}{\text{Var}(p)} - 1 \right) $$
+$$ \beta = (1-\bar{p}) \left( \frac{\bar{p}(1-\bar{p})}{\text{Var}(p)} - 1  \right) $$
+
+```{r eb-prior-estimation-1}
+# Overall batting average (estimate of prior mean)
+overall_avg <- sum(baseball_data$hits) / sum(baseball_data$at_bats)
+
+# Variance of individual raw averages
+var_raw_avg <- var(baseball_data$raw_avg)
+
+# Estimate alpha and beta for the Beta prior
+# Ensure the term (overall_avg * (1 - overall_avg) / var_raw_avg - 1) is positive
+# If not, it implies the observed variance is too high for a Beta distribution
+# In such cases, a simpler prior or more robust estimation might be needed.
+
+# A common adjustment for the variance of the true means is to subtract the average sampling variance
+# For Binomial, sampling variance is p(1-p)/N. We use overall_avg for p.
+mean_sampling_var <- mean(overall_avg * (1 - overall_avg) / baseball_data$at_bats)
+adjusted_var_p <- max(0, var_raw_avg - mean_sampling_var)
+
+if (adjusted_var_p == 0) {
+  # If adjusted variance is zero, implies all true means are identical, or very small variance
+  # This can happen with small datasets or if true values are very close.
+  # For a practical EB, we might use a very large alpha+beta (strong prior) or simplify.
+  # For this example, let's set a small positive value to avoid division by zero
+  # or use a default if the formula breaks.
+  alpha_est <- overall_avg * 100 # Arbitrary large number for strong prior
+  beta_est <- (1 - overall_avg) * 100
+} else {
+  common_term <- (overall_avg * (1 - overall_avg) / adjusted_var_p) - 1
+  alpha_est <- overall_avg * common_term
+  beta_est <- (1 - overall_avg) * common_term
+}
+
+# Ensure alpha and beta are positive
+alpha_est <- max(0.01, alpha_est)
+beta_est <- max(0.01, beta_est)
+
+cat(sprintf("Estimated Alpha: %.2f\n", alpha_est))
+cat(sprintf("Estimated Beta: %.2f\n", beta_est))
+cat(sprintf("Overall Average (Prior Mean): %.3f\n", overall_avg))
+```
+
+## 2.3 Empirical Bayes Estimates (Shrinkage)
+
+The Empirical Bayes estimate for each player\"s true batting average, $\hat{\theta}_{i}^{EB}$, is a weighted average of their raw average and the prior mean (overall average). For a Beta-Binomial model, this is given by:
+
+$$ \hat{\theta}_{i}^{EB} = \frac{H_i + \alpha}{N_i + \alpha + \beta} $$
+
+This formula clearly shows the shrinkage: the prior parameters $\alpha$ and $\beta$ act like \"pseudo-counts\" or \"prior observations,\" pulling the individual estimates towards the prior mean. The more data ($N_i$) a player has, the less their estimate is shrunk.
+```{r eb-shrinkage-demo-baseball, eval=FALSE}
+bbaseball_data <- baseball_data %>%
+  mutate(
+    eb_avg = (hits + alpha_est) / (at_bats + alpha_est + beta_est)
+  )
+
+# Plot raw vs. EB estimates
+ggplot(baseball_data, aes(x = raw_avg, y = eb_avg, color = at_bats)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_abline(intercept = 0, slope = 1, linetype = 'dashed', color = 'red') +
+  labs(
+    title = 'Empirical Bayes Shrinkage: Raw vs. EB Batting Averages',
+    x = 'Raw Batting Average',
+    y = 'Empirical Bayes Batting Average',
+    color = 'At-Bats'
+  ) +
+  coord_equal() + # Ensure x and y axes have same scale
+  scale_color_viridis_c() # Use a color scale for at_bats
+
+# Plot shrinkage lines
+ggplot(baseball_data, aes(x = player)) +
+  geom_segment(aes(y = raw_avg, yend = eb_avg, xend = player), color = 'gray', arrow = arrow(length = unit(0.02, 'npc'))) +
+  geom_point(aes(y = raw_avg), color = 'blue', size = 2, alpha = 0.7) +
+  geom_point(aes(y = eb_avg), color = 'red', size = 2, alpha = 0.7) +
+  labs(
+    title = 'Shrinkage Effect in Empirical Bayes (Baseball Batting)',
+    x = 'Player',
+    y = 'Batting Average'
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+## 2.4 Full Bayesian Hierarchical Model for Baseball Data
+
+Now, let's approach the baseball batting average problem using a full Bayesian hierarchical model, similar to the "Statistical Rethinking" framework. We assume that each player's true batting average $\theta_i$ comes from a population distribution, and we explicitly define priors for the hyperparameters of this population distribution.
+
+- **Likelihood**: $H_i \sim \text{Binomial}(N_i, p_i)$
+- **Linear Model**: $\text{logit}(p_i) = \bar{\alpha} + \alpha_{\text{player}[i]}$
+- **Varying Intercepts (Prior)**: $\alpha_{\text{player}[i]} \sim \text{Normal}(0, \sigma)$
+- **Hyper-priors**:
+    - $\bar{\alpha} \sim \text{Normal}(0, 1.5)$
+    - $\sigma \sim \text{Exponential}(1)$
+
+```{r baseball-full-bayes-model-1, eval=FALSE}
+# This code requires the 'rethinking' package to be installed and loaded.
+# If rethinking is not installed, please run install.packages("rethinking")
+
+#Your code here for Full Bayesian hierarchical model
+# Prepare data for ulam
+
+
+```
+
+## 2.5 Comparison of Estimates
+
+Let's compare the raw batting averages, the Empirical Bayes estimates, and the Full Bayesian hierarchical model estimates. This comparison highlights the effect of shrinkage and partial pooling across different methods.
+
+```{r baseball-comparison, eval=FALSE}
+# For conceptual illustration, let's simulate Full Bayesian estimates if the model was not run
+# In a real scenario, full_bayes_avg would come from the fitted model.
+if (!"full_bayes_avg" %in% colnames(baseball_data)) {
+  # Simulate some shrinkage towards the overall mean for conceptual Full Bayes
+  overall_avg_baseball <- sum(baseball_data$hits) / sum(baseball_data$at_bats)
+  shrinkage_strength_fb <- 0.7 # A conceptual value, potentially stronger than EB
+  baseball_data$full_bayes_avg <- with(baseball_data, raw_avg * (1 - shrinkage_strength_fb) + overall_avg_baseball * shrinkage_strength_fb)
+}
+
+baseball_data_long <- baseball_data %>%
+  select(player, raw_avg, eb_avg, full_bayes_avg) %>%
+  tidyr::gather(key = "method", value = "batting_average", -player)
+
+ggplot(baseball_data_long, aes(x = player, y = batting_average, color = method, group = player)) +
+  geom_point(position = position_dodge(width = 0.5), size = 3) +
+  geom_line(aes(group = player), position = position_dodge(width = 0.5), color = "gray", alpha = 0.6) +
+  labs(
+    title = "Comparison of Batting Average Estimates: Raw, EB, and Full Bayes",
+    x = "Player",
+    y = "Batting Average",
+    color = "Method"
+  ) +
+  scale_color_manual(values = c("raw_avg" = "blue", "eb_avg" = "red", "full_bayes_avg" = "darkgreen")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This comparison plot visually demonstrates how both Empirical Bayes and Full Bayesian methods shrink the individual player estimates towards a common mean, with the degree of shrinkage depending on the method and the amount of data for each player. Full Bayesian methods, with their explicit prior specification, offer a more complete probabilistic framework for inference.
+
+# 3. Student Hands-on Analysis: Hospital Mortality Rates
+
+In this section, you will apply the concepts of Empirical Bayes and Full Bayesian hierarchical modeling to a new dataset: hospital mortality rates. This exercise will allow you to compare the different estimation approaches and understand their implications in a real-world context.
+
+## 3.1 The Data: Hospital Mortality Rates
+
+We will simulate a dataset representing mortality rates for different hospitals. Each hospital has a certain number of patients and a number of observed deaths. The goal is to estimate the true underlying mortality rate for each hospital.
+
+```{r hospital-data-student}
+set.seed(123)
+num_hospitals <- 20
+patients <- sample(100:1000, num_hospitals, replace = TRUE)
+true_mortality_rates <- rbeta(num_hospitals, 1, 20) # True rates are low
+deaths <- rbinom(num_hospitals, size = patients, prob = true_mortality_rates)
+
+hospital_data <- data.frame(
+  hospital_id = 1:num_hospitals,
+  patients = patients,
+  deaths = deaths,
+  raw_mortality_rate = deaths / patients
+)
+
+head(hospital_data)
+```
+
+## 3.2 Task 1: Empirical Bayes Estimation
+
+Apply the Empirical Bayes approach to estimate the true mortality rates for each hospital. Follow these steps:
+
+1.  **Estimate the Prior**: Use the Method of Moments (as demonstrated in the baseball example) to estimate the parameters ($\alpha, \beta$) of a Beta prior distribution for the true mortality rates.
+2.  **Calculate EB Estimates**: Use the estimated prior parameters to calculate the Empirical Bayes (EB) mortality rate for each hospital.
+3.  **Visualize Shrinkage**: Create a plot similar to the baseball example, showing the raw mortality rates, the EB mortality rates, and the shrinkage effect.
+
+```{r student-eb-task, eval=FALSE}
+# Your code here for Empirical Bayes estimation and visualization
+
+# 1. Estimate the Prior
+# overall_mortality_avg <- ...
+# var_raw_mortality <- ...
+# alpha_est_hospital <- ...
+# beta_est_hospital <- ...
+
+# 2. Calculate EB Estimates
+# hospital_data$eb_mortality_rate <- ...
+
+# 3. Visualize Shrinkage
+# ggplot(...) + ...
+```
+
+## 3.3 Task 2: Full Bayesian Hierarchical Model
+
+Now, implement a Full Bayesian hierarchical model using the `rethinking` framework to estimate the true mortality rates. Follow these steps:
+
+1.  **Model Specification**: Define the likelihood and priors for your hierarchical model. Consider a Binomial likelihood for deaths, a logit link for the mortality rate, and normal priors for the varying intercepts and hyperparameters (similar to the departmental admissions example).
+2.  **Fit the Model**: Use `ulam` to fit your hierarchical model to the `hospital_data`.
+3.  **Extract Estimates**: Extract the posterior means for the true mortality rates for each hospital.
+
+```{r student-full-bayes-task, eval=FALSE}
+# Your code here for Full Bayesian hierarchical model
+
+# 1. Model Specification
+# m_hospital_hierarchical <- ulam(
+#   alist(
+#     deaths ~ dbinom(patients, p),
+#     logit(p) <- a_bar + a_hospital[hospital_id],
+#     a_hospital[hospital_id] ~ dnorm(0, sigma),
+#     a_bar ~ dnorm(0, 1.5),
+#     sigma ~ dexp(1)
+#   ), data = hospital_data, chains = 4, cores = 4, log_lik = TRUE
+# )
+
+# 2. Fit the Model (if rethinking is installed and eval=TRUE)
+# precis(m_hospital_hierarchical, depth = 2)
+
+# 3. Extract Estimates
+# hospital_data$full_bayes_mortality_rate <- ...
+```
+
+## 3.4 Task 3: Comparison and Discussion
+
+Compare the raw mortality rates, the Empirical Bayes estimates, and the Full Bayesian hierarchical model estimates. Discuss the similarities and differences between the results obtained from the two Bayesian approaches. Consider the impact of sample size (number of patients) on the estimates.
+
+1.  **Create a Comparison Plot**: Generate a plot that shows all three estimates (raw, EB, Full Bayes) for each hospital.
+2.  **Discuss Findings**: Write a brief discussion comparing the results and highlighting the benefits and limitations of each method.
+
+```{r student-comparison-task, eval=FALSE}
+# Your code here for comparison plot and discussion
+
+# 1. Create a Comparison Plot
+# hospital_data_long <- hospital_data %>%
+#   select(hospital_id, raw_mortality_rate, eb_mortality_rate, full_bayes_mortality_rate) %>%
+#   tidyr::gather(key = "method", value = "mortality_rate", -hospital_id)
+#
+# ggplot(hospital_data_long, aes(x = factor(hospital_id), y = mortality_rate, color = method, group = hospital_id)) + ...
+
+# 2. Discuss Findings
+# Your discussion here.
+```
+
+

@@ -1,0 +1,244 @@
+---
+title: "DS6410 Machine Learning II - Lab Session: Graphical Models and Causal Inference"
+author: "Manus AI"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+Welcome to the DS6410 Machine Learning II Lab Session on Graphical Models. This lab bridges the concepts from our two recent lectures: **Undirected Graphical Models** (learning associations and structure) and **Directed Graphical Models** (causal inference and do-calculus).
+
+By the end of this lab, you will be able to:
+1. Estimate high-dimensional undirected graphs using the Graphical Lasso.
+2. Learn directed acyclic graph (DAG) structures from observational data using the PC algorithm.
+3. Apply **do-calculus** and graphical criteria (backdoor and frontdoor) to identify and estimate causal effects using the `dagitty` package.
+
+---
+
+# Part 1: Undirected Graphical Models (Graph Estimation)
+
+In our first lecture, we discussed how undirected graphs (Markov Random Fields) encode conditional independencies. For continuous data, the Gaussian Graphical Model (GGM) is a powerful tool where the non-zero entries of the precision matrix (inverse covariance matrix) correspond to edges in the graph.
+
+We will use the `glasso` package to estimate a sparse precision matrix from data.
+
+## 1.1 Simulating Data and Estimating the GGM
+
+First, let's install and load the necessary packages.
+
+```{r install_packages_1, eval=FALSE}
+# Install required packages if you haven't already
+install.packages(c("glasso", "MASS", "igraph", "qgraph"))
+```
+
+```{r load_packages_1}
+library(glasso)
+library(MASS)
+library(qgraph)
+
+# Set seed for reproducibility
+set.seed(6410)
+
+# Simulate a true precision matrix (sparse)
+p <- 10 # Number of variables
+true_precision <- matrix(0, p, p)
+diag(true_precision) <- 1
+
+# Add some edges (conditional dependencies)
+true_precision[1,2] <- true_precision[2,1] <- 0.5
+true_precision[2,3] <- true_precision[3,2] <- 0.4
+true_precision[4,5] <- true_precision[5,4] <- 0.6
+true_precision[7,8] <- true_precision[8,7] <- 0.5
+true_precision[8,9] <- true_precision[9,8] <- 0.4
+
+# Ensure positive definiteness
+eigenvalues <- eigen(true_precision)$values
+if(min(eigenvalues) <= 0) {
+  true_precision <- true_precision + diag(abs(min(eigenvalues)) + 0.1, p)
+}
+
+# True covariance matrix
+true_cov <- solve(true_precision)
+
+# Generate 100 observations
+n <- 100
+X <- mvrnorm(n, mu = rep(0, p), Sigma = true_cov)
+
+# Compute sample covariance
+S <- cov(X)
+```
+
+Now, we apply the Graphical Lasso to estimate the sparse precision matrix. The tuning parameter `rho` controls the sparsity (L1 penalty).
+
+```{r glasso_estimation}
+# Apply Graphical Lasso
+rho_val <- 0.1
+gl_res <- glasso(S, rho = rho_val)
+
+# The estimated precision matrix
+est_precision <- gl_res$wi
+
+# Plot the true vs estimated graph
+par(mfrow=c(1,2))
+qgraph(true_precision, title="True GGM", theme="colorblind")
+qgraph(est_precision, title=paste("Estimated GGM (rho =", rho_val, ")"), theme="colorblind")
+```
+
+**Exercise 1:** Try changing the value of `rho` (e.g., 0.01, 0.5). How does the estimated graph change? What happens to the number of false positive and false negative edges?
+
+---
+
+# Part 2: Directed Graphical Models (Structure Learning)
+
+In the second lecture, we transitioned to Directed Acyclic Graphs (DAGs). Before we can do causal inference, we often need to learn the DAG structure from observational data. We will use the **PC Algorithm** from the `pcalg` package, which uses conditional independence tests to build a Completed Partially Directed Acyclic Graph (CPDAG).
+
+```{r install_packages_2, eval=FALSE}
+# BiocManager is needed for some graph packages
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(c("graph", "RBGL", "Rgraphviz"))
+install.packages("pcalg")
+```
+
+```{r load_packages_2}
+library(pcalg)
+library(graph)
+
+# Simulate data from a known DAG
+# DAG: 1 -> 2 -> 3; 1 -> 4 -> 3
+set.seed(6410)
+n_samples <- 1000
+V1 <- rnorm(n_samples)
+V2 <- 0.8 * V1 + rnorm(n_samples, sd = 0.5)
+V4 <- -0.6 * V1 + rnorm(n_samples, sd = 0.5)
+V3 <- 0.7 * V2 + 0.5 * V4 + rnorm(n_samples, sd = 0.5)
+
+df_dag <- data.frame(V1, V2, V3, V4)
+suffStat <- list(C = cor(df_dag), n = n_samples)
+
+# Run the PC algorithm using Gaussian conditional independence tests
+pc_fit <- pc(suffStat, indepTest = gaussCItest, alpha = 0.01, labels = colnames(df_dag), verbose = FALSE)
+
+# Plot the resulting CPDAG
+par(mfrow=c(1,1))
+plot(pc_fit, main = "Estimated CPDAG via PC Algorithm")
+```
+
+**Exercise 2:** Look at the output graph. Are all edges directed? Why or why not? (Hint: Think about Markov Equivalence Classes and v-structures).
+
+---
+
+# Part 3: Causal Inference and Do-Calculus
+
+Now we arrive at the core of Lecture 2: **Do-Calculus**. Once we have a DAG (either from domain knowledge or structure learning), we want to estimate the causal effect of an intervention, $P(Y | do(X))$.
+
+We will use the `dagitty` package, which is an incredible tool for analyzing DAGs, finding d-separation sets, and applying the rules of do-calculus (like the backdoor and frontdoor criteria).
+
+```{r install_packages_3, eval=FALSE}
+install.packages("dagitty")
+install.packages("ggdag")
+```
+
+```{r load_packages_3}
+library(dagitty)
+library(ggdag)
+library(ggplot2)
+```
+
+## 3.1 The Backdoor Criterion
+
+Let's define a DAG where we want to find the causal effect of an Exposure ($X$) on an Outcome ($Y$), but there is a Confounder ($C$) and a Mediator ($M$).
+
+```{r backdoor_dag}
+# Define the DAG using dagitty syntax
+dag_backdoor <- dagitty('dag {
+  C [pos="0,1"]
+  X [exposure, pos="-1,0"]
+  M [pos="0,0"]
+  Y [outcome, pos="1,0"]
+  
+  C -> X
+  C -> Y
+  X -> M
+  M -> Y
+}')
+
+# Plot the DAG
+ggdag(dag_backdoor, text_size = 5) + theme_dag() + ggtitle("DAG with Confounder and Mediator")
+```
+
+To estimate $P(Y | do(X))$, we need to block all backdoor paths from $X$ to $Y$.
+
+```{r backdoor_paths}
+# Find the adjustment sets using dagitty
+adj_sets <- adjustmentSets(dag_backdoor, exposure = "X", outcome = "Y", type = "minimal")
+print(adj_sets)
+```
+
+The output tells us that conditioning on `{C}` is sufficient to identify the causal effect. By the rules of do-calculus (specifically Rule 2: Action/Observation Exchange), because $X$ and $Y$ are d-separated by $C$ in the graph where outgoing edges from $X$ are removed, we can write:
+
+$$ P(Y | do(X)) = \sum_c P(Y | X, C=c) P(C=c) $$
+
+**Exercise 3.1:** Why shouldn't we condition on $M$? Use the concept of d-separation and the definition of a mediator to explain.
+
+## 3.2 The Frontdoor Criterion
+
+What if the confounder $U$ is **unobserved**? We cannot use the backdoor criterion because we cannot condition on $U$. However, if we have a mediator $M$ that is fully observed and isolated from $U$, we can use the **Frontdoor Criterion**.
+
+```{r frontdoor_dag}
+dag_frontdoor <- dagitty('dag {
+  U [unobserved, pos="0,1"]
+  X [exposure, pos="-1,0"]
+  M [pos="0,0"]
+  Y [outcome, pos="1,0"]
+  
+  U -> X
+  U -> Y
+  X -> M
+  M -> Y
+}')
+
+ggdag(dag_frontdoor, text_size = 5) + theme_dag() + ggtitle("Frontdoor DAG (U is unobserved)")
+```
+
+Let's ask `dagitty` if there is a valid adjustment set.
+
+```{r check_frontdoor}
+# Try to find a backdoor adjustment set
+adjustmentSets(dag_frontdoor, exposure = "X", outcome = "Y")
+```
+
+It returns `NULL` because there is no valid backdoor adjustment set (since $U$ is unobserved). However, we can use do-calculus to derive the frontdoor formula. 
+
+The frontdoor formula relies on two sequential applications of the backdoor criterion:
+1. The effect of $X$ on $M$ is unconfounded (no backdoor paths).
+2. The effect of $M$ on $Y$ is confounded by $U$, but we can use $X$ as a backdoor adjustment for the $M \to Y$ relationship!
+
+The resulting do-calculus derivation gives us the Frontdoor Formula:
+$$ P(Y | do(X)) = \sum_m P(M=m | X) \sum_{x'} P(Y | M=m, X=x') P(X=x') $$
+
+---
+
+# Conclusion
+
+In this lab, you have practiced:
+- Estimating undirected graphs using the Graphical Lasso.
+- Learning DAG structures using the PC algorithm.
+- Applying the rules of do-calculus to identify causal effects via backdoor and frontdoor criteria using `dagitty`.
+
+These tools form the foundation of modern causal machine learning and pattern recognition.
+
+# References
+[1] Friedman, J., Hastie, T., & Tibshirani, R. (2008). Sparse inverse covariance estimation with the graphical lasso. *Biostatistics*, 9(3), 432-441.
+[2] Spirtes, P., Glymour, C., & Scheines, R. (2000). *Causation, Prediction, and Search*. MIT press.
+[3] Pearl, J. (2009). *Causality*. Cambridge university press.
+[4] Textor, J., Hardt, J., & Knüppel, S. (2011). DAGitty: a graphical tool for analyzing causal diagrams. *Epidemiology*, 22(5), 745.
