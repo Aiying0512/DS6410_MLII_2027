@@ -58,8 +58,8 @@ By the end of the semester, students will be able to:
 
 - Homework approximately **every two weeks** (theory + coding)
 - Short in-class quizzes on fundamentals
-- Midterm: project-based assignment (Due 4/26)
-- Final: oral exam focusing on conceptual understanding (Exam time: 2:30-5:30pm, 4/30)
+- Course Project
+- Final Exam
 
 ---
 
